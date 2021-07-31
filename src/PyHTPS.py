@@ -68,7 +68,7 @@ def merge_cleavage_windows(row):
     return "".join(seq)
 
 
-def convert_to_cleavage(filename, search="MQ"):
+def convert_to_cleavage(filename, search="MQ", qc=False):
     """Receive a search file and returns a formatted cleavage matrix
 
     Args:
@@ -82,7 +82,8 @@ def convert_to_cleavage(filename, search="MQ"):
     df = df[df["Intensity"] > 0]
     # df = df[df['Intensity 1']>0]
     if search == "MQ":
-        df = df[(df["Score"] > 40) & (df["PEP"] <= 0.05)]
+        if qc:
+            df = df[(df["Score"] > 40) & (df["PEP"] <= 0.05)]
         df = df[["N-term cleavage window", "C-term cleavage window"]]
         df = df[df["N-term cleavage window"] != "________________"]
         df = df[df["C-term cleavage window"] != "________________"]
