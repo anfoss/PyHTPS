@@ -1,5 +1,3 @@
-# !/usr/bin/env python3
-
 import pandas as pd
 import math as m
 import numpy as np
