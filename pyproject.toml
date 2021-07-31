@@ -1,0 +1,30 @@
+[project]
+name = "PyHTPS"
+version = "0.0.1"
+description = "Python workflow for analysis of HTPS experiments"
+authors = [
+    "Andrea Fossati <andrea.fossati@ucsf.edu>"
+]
+license = "MIT"
+readme = "README.md"
+python = "^3.6"
+homepage = "https://github.com/anfoss/PyHTPS"
+repository = "https://github.com/anfoss/PyHTPS"
+documentation = "https://github.com/anfoss/PyHTPS"
+
+keywords = ["bioinformatic", "utils"]
+
+classifiers = [
+    "Topic :: Bioinformatic"
+]
+
+# Requirements
+[dependencies]
+Pandas = "^1.2.0"
+numpy = "^1.2.0"
+scipy = "^1.5.2"
+
+
+[build-system]
+requires = ["setuptools>=52.0.0", "wheel>=0.36.2"]
+build-backend = "setuptools.build_meta"
