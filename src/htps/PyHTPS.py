@@ -2,115 +2,198 @@ import pandas as pd
 import math as m
 import numpy as np
 from scipy.spatial import distance_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.ensemble import RandomForestClassifier
 
 
-def explode(df, lst_cols, fill_value=""):
-    # make sure `lst_cols` is a list
-    if lst_cols and not isinstance(lst_cols, list):
-        lst_cols = [lst_cols]
-    # all columns except `lst_cols`
-    idx_cols = df.columns.difference(lst_cols)
+def get_aa_distr():
+    aa = [
+        "A",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "L",
+        "M",
+        "N",
+        "P",
+        "Q",
+        "R",
+        "S",
+        "T",
+        "W",
+        "Y",
+        "K",
+        "V",
+    ]
+    val = [
+        104162,
+        21798,
+        75974,
+        114861,
+        47771,
+        92794,
+        31054,
+        65094,
+        130814,
+        32829,
+        52269,
+        80896,
+        68808,
+        78356,
+        106859,
+        74448,
+        13544,
+        36490,
+        96627,
+        86690,
+    ]
+    perc = [
+        7.376191279,
+        1.543616842,
+        5.380069087,
+        8.133836778,
+        3.382884676,
+        6.571170806,
+        2.199076861,
+        4.609606143,
+        9.263542232,
+        2.324772791,
+        3.701408786,
+        5.728618591,
+        4.8726116,
+        5.548749485,
+        7.567178279,
+        5.272005994,
+        0.959113061,
+        2.584025074,
+        6.842603202,
+        6.138918434,
+    ]
+    return pd.DataFrame({"AA": aa, "value": val, "perc": perc})
 
-    # calculate lengths of lists
-    lens = df[lst_cols[0]].str.len()
 
-    if (lens > 0).all():
-        # ALL lists in cells aren't empty
-        return (
-            pd.DataFrame(
-                {
-                    col: np.repeat(df[col].values, df[lst_cols[0]].str.len())
-                    for col in idx_cols
-                }
-            )
-            .assign(**{col: np.concatenate(df[col].values) for col in lst_cols})
-            .loc[:, df.columns]
-        )
-    else:
-        # at least one list in cells is empty
-        return (
-            pd.DataFrame(
-                {
-                    col: np.repeat(df[col].values, df[lst_cols[0]].str.len())
-                    for col in idx_cols
-                }
-            )
-            .assign(**{col: np.concatenate(df[col].values) for col in lst_cols})
-            .append(df.loc[lens == 0, idx_cols])
-            .fillna(fill_value)
-            .loc[:, df.columns]
-        )
-
-
-def merge_cleavage_windows(row):
-    """Receive a row from MQ and returns the correct sequence of N-C window
+def count_aa_distr(sq):
+    '''Count aa distribution in a fasta file
 
     Args:
-    row: pd apply series from a peptides.txt file
+    sq: sequence list from parse fasta
 
     Returns:
-    N + C term window without overlapping sequences
-    """
-    nterm = list(row["N-term cleavage window"])
-    cterm = list(row["C-term cleavage window"])
-    # inefficient but get the job done
-    i = 0
-    for idx, x in enumerate(cterm):
-        idx += 1
-        # assumption is that the end of N is the beginning of C
-        if nterm[:-idx] == x:
-            i += 1
-        else:
-            break
-    seq = nterm + cterm[:i]
-    return "".join(seq)
+    dataframe with AA, value and percentage
+    '''
+    pass
 
 
-def convert_to_cleavage(filename, search="MQ", qc=False):
-    """Receive a search file and returns a formatted cleavage matrix
+def parse_fasta(db):
+    '''Parse a fasta file
 
     Args:
-    filename: txt file generated from a search engine
+    db: fasta filename
+
+    Returns:
+    two list one for ids and one for sequence
+    '''
+    from Bio import SeqIO
+
+    sq, id = [], []
+    for record in SeqIO.parse(db, "fasta"):
+        sq.append(str(record.seq))
+        id.append(record.id.split("|")[1])
+    return id, sq
+
+
+def match_peptide(id2seq, pid, pepseq, q):
+    '''Matches a peptide within a sequence and return the cleavage window +-q
+
+    Args:
+    id2seq: dictionary mapping id to peptide seq (need to have same id)
+    pid: protein ids
+    pepseq: sequence to search
+    q : window size (default 8)
+
+    Returns:
+    q sized cleavage windows as a list
+    '''
+    # idx of cleavage site
+    idx = id2seq[pid].find(pepseq) + len(pepseq)
+    # if cleavage is C terminali
+    if idx == len(id2seq[pid]):
+        seq = [np.nan] * q*2
+    elif len(id2seq[pid]) - idx < q:
+        # then center cleavage and use pad the cterm with nan
+        # q aa
+        nterm = list(id2seq[pid][idx - q : idx])
+        cterm = list(id2seq[pid][idx:])
+        while len(cterm) <q:
+            cterm.append(np.nan)
+        nterm.extend(cterm)
+        seq = nterm
+    # if cleavage is N term
+    elif idx - q < 0:
+        # q aa at the c term
+        cterm = list(id2seq[pid][idx: idx+q])
+        nterm = list(id2seq[pid][:idx])
+        while len(nterm) <q:
+            nterm.insert(0, np.nan)
+        seq = nterm.extend(cterm)
+        seq = nterm
+    else:
+        seq = list(id2seq[pid][idx - q : idx + q])
+
+    return pd.Series(seq, dtype="object")
+
+
+def convert_to_cleavage(filename, db, search="MQ", qc=False, q=8):
+    '''Receive a search file and returns a formatted cleavage matrix
+
+    Args:
+    filename: txt/tsv file generated from a search engine
     search: flag signalling the search engine used
+    db: dict mapping ids to sequence
+    qc: bool, qc filtering for high scoring psm
+    q: cleavage window size (int)
 
     Returns:
     formatted cleavage matrix
-    """
+    '''
     df = pd.read_table(filename, sep="\t")
-    df = df[df["Intensity"] > 0]
-    # df = df[df['Intensity 1']>0]
     if search == "MQ":
+        df = df[df["Intensity"] > 0]
         if qc:
             df = df[(df["Score"] > 40) & (df["PEP"] <= 0.05)]
-        df = df[["N-term cleavage window", "C-term cleavage window"]]
-        df = df[df["N-term cleavage window"] != "________________"]
-        df = df[df["C-term cleavage window"] != "________________"]
-        df.dropna(inplace=True)
-        # C-term is in N-term window only thing to do is to remove
-        # df = df['N-term cleavage window'] + df['C-term cleavage window']
-        df = df.apply(merge_cleavage_windows, axis=1)
-        df = df.drop_duplicates()
-        df = pd.DataFrame(list(df.str.split("").dropna()))
-        df.drop([0, 17], axis=1, inplace=True)
-    elif search == "MSFragger":
-        pass
+        df = df[["Sequence", "Leading razor protein"]]
+        df = df[df["Leading razor protein"].str.contains("sp")]
+        df["ID"] = [x.split("|")[1] for x in list(df["Leading razor protein"])]
+        df = df.drop("Leading razor protein", axis=1)
+        df.columns = ["Sequence", "Protein ID"]
+    elif search == "Fragger":
+        df = df[["Peptide", "Protein ID"]]
+        df.columns = ["Sequence", "Protein ID"]
     elif search == "custom":
         pass
+    df.drop_duplicates(subset=["Sequence"], inplace=True)
+    df = df.apply(
+        (lambda x: match_peptide(db, x["Protein ID"], x["Sequence"], q)), axis=1
+    )
     w = len(list(df)) // 2
-    # convert it to the form p-1 and p 1' for p prime
-    df.columns = [-x for x in range(1, w + 1)][::-1] + [x for x in range(1, w + 1)]
+    df.columns = [str(x) for x in range(1, w + 1)][::-1] + [str(x)+'\'' for x in range(1, w + 1)]
     return df
 
 
 def expand_counts(df):
-    """Receive a cleavage matrix and add missing aa with 0 counts per position
+    '''Receive a cleavage matrix and add missing aa with 0 counts per position
 
     Args:
     df: cleavage matrix
 
     Returns:
     filled cleavage matrix
-    """
+    '''
 
     aa = [
         "A",
@@ -145,14 +228,14 @@ def expand_counts(df):
 
 
 def entropy(arr):
-    """Calculates shannon entropy per position
+    '''Calculates shannon entropy per position
 
     Args:
     arr: a position (column) from a cleavage matrix
 
     Returns:
     one entropy value per position
-    """
+    '''
     import math as m
 
     d = [m.log(x, 20) * x for x in list(arr.values)]
@@ -168,7 +251,7 @@ def subpocket_e(entr_df):
 
 
 def blocks_e(entropy_arr):
-    """Calculates subpocket entropy per position according to
+    '''Calculates subpocket entropy per position according to
     https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1003007
     local entropy by summing block wise the entropies
     i.e p4 to p1 available
@@ -183,7 +266,7 @@ def blocks_e(entropy_arr):
 
     Returns:
     block entropy per position
-    """
+    '''
     tmp = list(entropy_arr)
     w = len(tmp) // 2
     left = [sum(tmp[x:w]) for x in range(0, w)]
@@ -191,17 +274,8 @@ def blocks_e(entropy_arr):
     return pd.Series(left + right)
 
 
-def get_htps_db(htps_db):
-    from Bio import SeqIO
-
-    sq = []
-    for record in SeqIO.parse(htps_db, "fasta"):
-        sq.append(str(record.seq))
-    return list("".join(sq))
-
-
 def sequence_decoy(htps_db, df, n=50):
-    """generate a cleavage matrix by random sampling peptides in htps DB
+    '''generate a cleavage matrix by random sampling peptides in htps DB
     Args:
     htps db: list of aa from string concatenated htps db
     df: cleavage matrix (peptide  level)
@@ -209,8 +283,7 @@ def sequence_decoy(htps_db, df, n=50):
 
     Returns:
     normalized frequency matrix
-    """
-
+    '''
     # generate random cleavage matrix N times
     mtrx = []
     nrow, ncol = df.shape
@@ -234,39 +307,109 @@ def sequence_decoy(htps_db, df, n=50):
 
 
 def normalize_aa_abundance(df, aa):
-    """normalize a cleavage frequency matrix by the frequency of aa in htps db fasta
+    '''normalize a cleavage frequency matrix by the frequency of aa in htps db fasta
     Args:
     df: cleavage frequency matrix
 
     Returns:
     normalized frequency matrix
-    """
+    '''
     df = df.apply((lambda x: x / aa["value"]), axis=0)
     df = df.apply((lambda x: x / np.sum(x)), axis=0)
     return df
 
 
-def convert_cleavage_matrx(cleav_mtrx, pref, write=True):
-    """process a single cleavage matrix into its specificity, entropy and block entropy
+def aa_importance(target, decoy):
+    '''train RF model and extract feature importance per position
+
+    target = cleavage matrix
+    decoy = decoy cleavage matrix
+    '''
+    target['class'] = 1
+    decoy['class'] = 0
+    cmb = pd.concat([target, decoy])
+    # conc = cmb.values.tolist()).str.join('')
+    # print(conc)
+    # assert False
+    y = cmb['class'].values
+    X = cmb.drop(['class'], axis=1)
+    aa = [
+        "A",
+        "R",
+        "N",
+        "D",
+        "C",
+        "Q",
+        "E",
+        "G",
+        "H",
+        "I",
+        "L",
+        "K",
+        "M",
+        "F",
+        "P",
+        "S",
+        "T",
+        "W",
+        "Y",
+        "V",
+    ]
+    char_dict = {}
+    for index, val in enumerate(aa):
+        char_dict[val] = index+1
+    # one hot encode
+    X = X.replace(char_dict)
+    rf_clf = RandomForestClassifier()
+    rf_clf.fit(X, y)
+    print(rf_clf.feature_importances_)
+    assert False
+
+    # split
+    df = pd.DataFrame(
+    {'feature': list(target),
+     'importance': rf_clf.feature_importances_})
+
+    # filter features without importance
+    df = df[df['importance']>0]
+    df.sort_values(['importance'],ascending=False, inplace=True)
+
+    # keep first 20
+    top20 = df.iloc[0:20]
+    sns.barplot(x="importance", y="feature", data=top20, color="salmon", saturation=.5)
+    plt.show()
+    df.to_csv('test.csv')
+    assert False
+    # train
+
+
+    # extract features
+
+    # return feature map
+
+
+def convert_cleavage_matrx(cleav_mtrx, aa_distr, pref, write=True):
+    '''process a single cleavage matrix into its specificity, entropy and block entropy
     Args:
     cleav_mtrx: cleavage frequency matrix (n aa, n sites)
     pref: string prefix to be added to the specificity, cleavage and block entropy df
+    aa : dataframe with distribution of aa
     write: bool, write output to file
 
     Returns:
     spec_df = cleavage specificity dataframe per position (aa, n sites)
     entr_df = entropy per position (n sites)
     block_df = block entropy per position (n sites)
-    """
+    '''
     # sort to ensure same order between all matrixes
     cleav_mtrx.sort_index(inplace=True)
     spec_df = cleav_mtrx.apply((lambda x: x / np.sum(x)), axis=0)
-    aa = pd.read_csv("test/distribution_AA.csv").set_index("AA")
-    cleav_mtrx = normalize_aa_abundance(cleav_mtrx, aa)
+    spec_df = np.log2(spec_df)
+    cleav_mtrx = normalize_aa_abundance(cleav_mtrx, aa_distr)
     entr_mtrx = cleav_mtrx.apply(entropy, axis=0)
     bl_entr_mtrx = blocks_e(entr_mtrx)
-    entr_mtrx.name='{} Entropy'.format(pref)
-    bl_entr_mtrx.name='{} Block entropy'.format(pref)
+    entr_mtrx.name = "{} Entropy".format(pref)
+    bl_entr_mtrx.name = "{} Block entropy".format(pref)
     if write:
         cleav_mtrx.to_csv("{}_cleavage_prob.csv".format(pref))
         entr_mtrx.to_csv("{}_entropy.csv".format(pref))
@@ -275,24 +418,98 @@ def convert_cleavage_matrx(cleav_mtrx, pref, write=True):
     return spec_df, cleav_mtrx, entr_mtrx, bl_entr_mtrx
 
 
-def main():
-    """
-    process a single file
-    """
-    cleav_mtrx = convert_to_cleavage("test/peptides.txt", "MQ")
-    db = get_htps_db("test/HTPS_db.fasta")
-    decoys = sequence_decoy(db, cleav_mtrx, 50)
+def permutation_pvalue(target, decoy, p=0.1, i=500):
+    '''Permutation p value per position per AA
 
+    target: dataframe of specificity AA
+    decoy: dataframe of decoy specificity
+    p = p value threshold
+    i: number of iteration
+    '''
+    from functools import reduce
+    diff = np.abs(target.values) - np.abs(decoy.values)
+    v = np.hstack((target.values, decoy.values)).flatten()
+    rnd = []
+    for x in range(0,i):
+        np.random.seed(x)
+        t_rnd = np.random.choice(v, size=(target.shape))
+        d_rnd = np.random.choice(v, size=(decoy.shape))
+        np.random.shuffle(v)
+        diff_rnd = (np.abs(diff) > np.abs(t_rnd - d_rnd)).astype(int)
+        rnd.append(diff_rnd)
+
+    base = rnd.pop()
+    for x in rnd:
+        np.add(base, x)
+    base = base/i
+    base[base>p] = 0
+    pval = pd.DataFrame(base, columns=target.columns, index=target.index)
+    return pval
+
+
+def plot_spec_matrix(matrix, output):
+    '''Permutation p value per position per AA
+
+    target: dataframe of specificity AA
+    decoy: dataframe of decoy specificity
+    p = p value threshold
+    i: number of iteration
+    '''
+    # sns.color_palette("viridis", as_cmap=True)
+    fig, ax = plt.subplots(figsize=(5,5))
+    g = sns.heatmap(
+        matrix,
+        cmap="coolwarm",
+        #square=True,
+        cbar_kws={"shrink": .82},
+        linewidths=0.1,
+        linecolor='black',
+        ax=ax
+    )
+    for _, spine in g.spines.items():
+        spine.set_visible(True)
+    g.set(xlabel="Position", ylabel="AA", aspect="equal")
+    plt.ylabel("AA", fontsize=9)
+    plt.xlabel("Position", fontsize=9)
+    ax.tick_params(axis='both', which='major', labelsize=6)
+    ax.tick_params(axis='both', which='minor', labelsize=6)
+    plt.savefig('{}.pdf'.format(output), bbox_inches='tight', dpi=1600)
+    plt.close()
+
+
+def main():
+    '''
+    process a single file
+    '''
+    ids, seq = parse_fasta("HTPS_db.fasta")
+    cleav_mtrx = convert_to_cleavage(
+        "peptides.txt", dict(zip(ids, seq)), search="MQ", qc=False, q=10
+    )
+    db = list("".join(seq))
+    dec_cleav_mtrx = sequence_decoy(db, cleav_mtrx, 100)
+    # aa_imp = aa_importance(cleav_mtrx, dec_cleav_mtrx)
+    # assert False
     cleav_mtrx = cleav_mtrx.apply(pd.value_counts, result_type="expand")
     cleav_mtrx = expand_counts(cleav_mtrx)
+    aa_distr = get_aa_distr().set_index("AA")
     spec_df, cleav_mtrx, entr_mtrx, bl_entr_mtrx = convert_cleavage_matrx(
-        cleav_mtrx, "Tryp", True
+        cleav_mtrx, aa_distr, "Furin", True
     )
     spec_dec, cleav_dec, entr_dec, bl_entr_dec = convert_cleavage_matrx(
-        decoys, "", False
+        dec_cleav_mtrx, aa_distr, "", False
     )
     dff = spec_df.values - spec_dec.values
     dff = pd.DataFrame(dff, index=spec_df.index)
+    w = len(list(dff)) // 2
+    # convert it to the form p-1 and p 1' for p prime
+    dff.columns = [-x for x in range(1, w + 1)][::-1] + [x for x in range(1, w + 1)]
+    dff.to_csv("delta_spec{}.csv".format("Furin"))
+    pval_df = permutation_pvalue(spec_df, spec_dec, p=0.05, i=1000)
+    plot_spec_matrix(dff, 'furin_fc')
+    dff[pval_df.values == 0] = np.nan
+    # dff.to_csv("delta_spec{}_filtered.csv".format("Furin"))
+    plot_spec_matrix(dff, 'furin_fc_filtered')
+
 
 
 if __name__ == "__main__":
