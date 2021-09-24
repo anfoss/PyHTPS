@@ -483,7 +483,7 @@ def main():
     '''
     ids, seq = parse_fasta("HTPS_db.fasta")
     cleav_mtrx = convert_to_cleavage(
-        "peptides.txt", dict(zip(ids, seq)), search="MQ", qc=False, q=10
+        "peptides.txt", dict(zip(ids, seq)), search="MQ", qc=True, q=10
     )
     db = list("".join(seq))
     dec_cleav_mtrx = sequence_decoy(db, cleav_mtrx, 100)
@@ -503,12 +503,12 @@ def main():
     w = len(list(dff)) // 2
     # convert it to the form p-1 and p 1' for p prime
     dff.columns = [-x for x in range(1, w + 1)][::-1] + [x for x in range(1, w + 1)]
-    dff.to_csv("delta_spec{}.csv".format("Furin"))
+    dff.to_csv("results/delta_spec{}.csv".format("Furin1"))
     pval_df = permutation_pvalue(spec_df, spec_dec, p=0.05, i=1000)
-    plot_spec_matrix(dff, 'furin_fc')
+    plot_spec_matrix(dff, 'results/furin_fc1')
     dff[pval_df.values == 0] = np.nan
-    # dff.to_csv("delta_spec{}_filtered.csv".format("Furin"))
-    plot_spec_matrix(dff, 'furin_fc_filtered')
+    dff.to_csv("results/delta_spec{}_filtered1.csv".format("Furin"))
+    plot_spec_matrix(dff, 'results/furin_fc_filtered1')
 
 
 

@@ -127,8 +127,8 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-*/*/DS_Store
-src/htps/*DS_Store
+src/.DS_Store
+src/htps/.DS_Store
 src/htps/*csv
 src/htps/*tsv
 src/htps/*txt
