@@ -274,6 +274,39 @@ def blocks_e(entropy_arr):
     return pd.Series(left + right)
 
 
+def freq_block(clevage_matrix, q):
+    '''
+    calculate frequencies of combinations per block
+    https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1003007
+    '''
+    # for each block:
+    out = []
+    for x in range(-q, q+1):
+        print(x)
+        # block upstream of cleavage site or downstream
+        if x < 0:
+            # abs(q:q/2)
+            block = str(abs(x))
+            bl = clevage_matrix.loc[:, block:str(1)]
+        elif x==0:
+            pass
+        else:
+            block = str(x) + '\''
+            bl = clevage_matrix.loc[:, '1\'':block]
+            #q/2:q
+        if x !=0:
+            bl.fillna('X', inplace=True)
+            sh = bl.shape
+            bl['seq'] = bl.values.sum(axis=1)
+            bl = bl['seq'].value_counts().reset_index()
+            bl['freq'] = bl['seq']/sh[0]
+            bl['block'] = 'B' + block
+            out.append(bl)
+    blocks = pd.concat(out)
+    blocks.to_csv('blocks.csv')
+
+
+
 def sequence_decoy(htps_db, df, n=50):
     '''generate a cleavage matrix by random sampling peptides in htps DB
     Args:
@@ -481,10 +514,12 @@ def main():
     '''
     process a single file
     '''
+    q=10
     ids, seq = parse_fasta("HTPS_db.fasta")
     cleav_mtrx = convert_to_cleavage(
-        "peptides.txt", dict(zip(ids, seq)), search="MQ", qc=True, q=10
+        "peptides.txt", dict(zip(ids, seq)), search="MQ", qc=True, q=q
     )
+    freq_block(cleav_mtrx, q=q)
     db = list("".join(seq))
     dec_cleav_mtrx = sequence_decoy(db, cleav_mtrx, 100)
     # aa_imp = aa_importance(cleav_mtrx, dec_cleav_mtrx)
